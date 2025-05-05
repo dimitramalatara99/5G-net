@@ -1,8 +1,8 @@
 import numpy as np
 import pandas as pd
 from numpy import absolute
-from sklearn.metrics import mean_absolute_error
-from sklearn.model_selection import train_test_split, RepeatedKFold, cross_val_score
+from sklearn.metrics import mean_absolute_error, r2_score, mean_squared_error
+from sklearn.model_selection import train_test_split, RepeatedKFold, cross_val_score, KFold
 import optuna
 import shap
 import matplotlib.pyplot as plt
@@ -21,10 +21,12 @@ X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_
 
 
 params = {'objective': 'reg:squarederror',
-         'max_depth': 10,  # of the tree 4
-         'alpha': 10,  # in case of overfiting
-         'learning_rate': 0.08,  # slow learning
-         'n_estimators': 73  # number of trees
+         'max_depth': 8,  # of the tree 10
+         'alpha': 10,  # in case of overfiting L1 Regularization 2
+         'learning_rate': 0.1,  # slow learning
+         'n_estimators': 210,  # number of trees 210
+         'lambda': 5, #L2 Regularization 3, 0.8
+         'gamma': 0.07 #check overfitting 0.03
          }
 xgb_reg = XGBRegressor(**params)
 xgb_reg.fit(X_train, y_train)
@@ -75,18 +77,19 @@ print(scores[:5])
 
 # make scores positive
 scores = absolute(scores)
-print(' MAE evaluation: %.3f (%.3f)' % (scores.mean(), scores.std()))
+print('MAE evaluation: %.3f (%.3f)' % (scores.mean(), scores.std()))
 
 
 # optuna framework for tuning hyperparameters
 def objective(trial):
    params_opt = {
        'objective': 'reg:squarederror',
-       'n_estimators': trial.suggest_int('n_estimators', 50, 150),
-       'max_depth': trial.suggest_int('max_depth', 3, 10),
-       'learning_rate': trial.suggest_float('learning_rate', 0.001, 0.1),
-       'alpha': trial.suggest_float('alpha', 0, 20),
+       'n_estimators': trial.suggest_int('n_estimators', 50, 300),
+       'max_depth': trial.suggest_int('max_depth', 3, 12),
+       'learning_rate': trial.suggest_float('learning_rate', 0.001, 0.2),
+       'alpha': trial.suggest_float('alpha', 0, 15),
        'lambda': trial.suggest_float('lambda', 0, 15),  # L2 regularization
+       'gamma': trial.suggest_float('gamma', 0, 10),
    }
 
    model = XGBRegressor(**params_opt)
@@ -101,12 +104,16 @@ def objective(trial):
 
 # run optuna
 study = optuna.create_study(direction='minimize')
-study.optimize(objective, n_trials=20, timeout=60)  # 20 trials or 40 seconds
+study.optimize(objective, n_trials=30, timeout=130)  # 30 trials or 130 seconds
 
 
 print("Best :", study.best_params)
 print("Best CV MAE:", study.best_value)
 
+mean_actual = y_test.mean()
+mae_percentage = (2.370 / mean_actual) * 100
+
+print(f"MAE as a percentage: {mae_percentage:.2f}%")
 
 # tarin final model with best params
 best_model = XGBRegressor(**study.best_params)
@@ -118,6 +125,21 @@ y_pred = best_model.predict(X_test)
 test_mae = mean_absolute_error(y_test, y_pred)
 print("Test MAE:", test_mae)
 
+# Υπολογισμός MAPE
+def mean_absolute_percentage_error(y_true, y_pred):
+    return np.mean(np.abs((y_true - y_pred) / y_true)) * 100
+
+mse = mean_squared_error(y_test, y_pred)
+rmse = np.sqrt(mean_squared_error(y_test, y_pred))
+mape = mean_absolute_percentage_error(y_test, y_pred)
+r2 = r2_score(y_test, y_pred)
+print(f"Root Mean Squared Error (RMSE): {rmse:.4f}")
+print(f"MAPE: {mape:.2f}%")
+print(f"R² Score: {r2:.3f}")
+
+# std_y = np.std(df['PathLoss(db)'], ddof=1)  # ddof=1 για να υπολογιστεί σωστά για δείγμα
+# print("Τυπικό σφάλμα του PathLoss:", std_y)
+
 
 explainer = shap.Explainer(xgb_reg, X_train)
 shap_values = explainer(X_test)
@@ -127,24 +149,11 @@ shap_values = explainer(X_test)
 shap.plots.beeswarm(shap_values)
 shap.plots.waterfall(shap_values[5])
 
-# Υπολογισμός MAPE
-# def mean_absolute_percentage_error(y_true, y_pred):
-#     return np.mean(np.abs((y_true - y_pred) / y_true)) * 100
-
-# mape = mean_absolute_percentage_error(y_test, y_pred)
-# mse = mean_squared_error(y_test, y_pred)
-# r2 = r2_score(y_test, y_pred)
-# print(f"Test MAPE: {mape:.2f}%")
-# print(f"Mean Squared Error (MSE): {mse:.4f}")
-# print(f"Test R² Score: {r2:.3f}")
-
-# std_y = np.std(df['PathLoss(db)'], ddof=1)  # ddof=1 για να υπολογιστεί σωστά για δείγμα
-# print("Τυπικό σφάλμα του PathLoss:", std_y)
 
 train_errors = []
 test_errors = []
 
-#τρεεσ
+
 n_trees = range(10, 200, 10)
 
 best_params = study.best_params.copy()
@@ -172,4 +181,30 @@ plt.ylabel("Mean Absolute Error (MAE)")
 plt.title("Overfitting Check: Train vs Test Error")
 plt.legend()
 plt.grid()
+plt.show()
+
+
+
+kf = KFold(n_splits=10, shuffle=True, random_state=42)
+
+fig, axes = plt.subplots(2, 5, figsize=(15, 6))  # 2 γραμμές, 5 στήλες για τα 10 folds
+axes = axes.flatten()
+
+for i, (train_idx, test_idx) in enumerate(kf.split(X)):
+    X_train_fold, X_test_fold = X.iloc[train_idx], X.iloc[test_idx]
+    y_train_fold, y_test_fold = y.iloc[train_idx], y.iloc[test_idx]
+
+    model = XGBRegressor(**study.best_params)  # Χρήση των καλύτερων παραμέτρων από Optuna
+    model.fit(X_train_fold, y_train_fold)
+
+    y_pred_fold = model.predict(X_test_fold)
+
+    # Scatter plot
+    axes[i].scatter(y_test_fold, y_pred_fold, alpha=0.5)
+    axes[i].plot([min(y_test_fold), max(y_test_fold)], [min(y_test_fold), max(y_test_fold)], 'r--')  # Διαγώνια γραμμή y=x
+    axes[i].set_title(f"Fold {i+1}")
+    axes[i].set_xlabel("Actual")
+    axes[i].set_ylabel("Predicted")
+
+plt.tight_layout()
 plt.show()
