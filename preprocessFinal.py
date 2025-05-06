@@ -46,5 +46,5 @@ df.to_csv("new_new.csv", index=False)
 print("\nProcessed dataset saved as 'new_new.csv'")
 
 sns.histplot(df["PathLoss(db)"], bins=30, kde=True)
-plt.title("Κατανομή του PathLoss(db)")
+plt.title("PathLoss(db) distribution")
 plt.show()
