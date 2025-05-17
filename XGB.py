@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 from xgboost import XGBRegressor, cv, plot_importance
 import seaborn as sns
 from sklearn.inspection import permutation_importance
-
+from matplotlib.colors import ListedColormap
 
 df = pd.read_csv("new_new.csv")
 
@@ -18,6 +18,29 @@ y = df['PathLoss(db)']
 
 # training
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=22)
+
+n_samples = 100
+kf = KFold(n_splits=10, shuffle=False)
+
+# 0: unused, 1: train, 2: validation
+cv_visual = np.zeros((10, n_samples))
+
+# Συμπλήρωση του πίνακα με 1 (train) και 2 (test) για κάθε fold
+for fold_idx, (train_index, test_index) in enumerate(kf.split(range(n_samples))):
+    cv_visual[fold_idx, train_index] = 1
+    cv_visual[fold_idx, test_index] = 2
+
+plt.figure(figsize=(12, 4))
+colors = ["lightblue", "lightgray", "violet"]
+custom_cmap = ListedColormap(colors)
+plt.imshow(cv_visual, interpolation='nearest', cmap=custom_cmap)
+plt.title("10-Fold Cross-Validation Split Visualization (Before Prediction)")
+plt.xlabel("Samples")
+plt.ylabel("Fold")
+cbar = plt.colorbar(ticks=[0, 1, 2], label='Role')
+cbar.ax.set_yticklabels(['Unused', 'Train', 'Validation'])
+plt.tight_layout()
+plt.show()
 
 
 params = {'objective': 'reg:squarederror',
